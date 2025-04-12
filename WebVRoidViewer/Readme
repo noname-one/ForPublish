@@ -1,0 +1,6 @@
+このリポジトリは、three.jsを使用して、VRoidをWebページ上に表示するデモコード公開用です。
+
+使用しているライブラリは以下の通りです：
+
+- three / GLTFLoader / OrbitControls / BufferGeometryUtils © Mr.doob
+- three-vrm © pixiv Inc.
