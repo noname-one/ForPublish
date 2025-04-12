@@ -1,0 +1,112 @@
+<span id="loading"></span>
+<script type="module">
+    import * as THREE from './three.module.js';
+    import { GLTFLoader } from './GLTFLoader.js';
+    import { OrbitControls } from './OrbitControls.js';
+    import { VRMLoaderPlugin } from './three-vrm.module.min.js';
+
+    const VRM_FILE_PATH = './model.vrm'
+    const VRM_CANVAS_EDGE_LENGTH = 300; //VRoidを表示するキャンバスの一辺の長さ(px)
+    const canvasWidth = VRM_CANVAS_EDGE_LENGTH;
+    const canvasHeight = VRM_CANVAS_EDGE_LENGTH;
+    const DEFAULT_CAMERA_CONFIG = {
+        position: {    // カメラ初期位置の補正
+            x: -0.15,
+            y_heightOffset: 0.025,
+            z_distance: 0.4,
+        },
+        targetPos: {    // カメラ注視点の補正
+            x: 0.04,
+            y: 0,
+            z: 0,
+        }
+    };
+    
+    // VRoid読み込み
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+    loader.load(
+        VRM_FILE_PATH,
+        (gltf) => onLoad(gltf),
+        (progress) => {
+            document.getElementById("loading").innerText = `${parseInt(100.0 * (progress.loaded / progress.total))}%`;
+        },
+        (error) => console.error(error)
+    );
+
+    /**
+     * VRoid読み込み完了後の処理
+     */
+    let renderer;
+    let scene;
+    let camera;
+    function onLoad(gltf){
+        // canvasの用意
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(
+            canvasWidth,
+            canvasHeight
+        );
+        document.body.appendChild(renderer.domElement);
+
+        // シーンの設定
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        // ライトを設定してシーンに追加
+        const light = new THREE.DirectionalLight(0xffffff, 3.0);
+        light.position.set(1.0, 1.0, 1.0).normalize();
+        scene.add(light);
+
+        // VRMモデルを設定してシーンに追加
+        const vrm = gltf.userData.vrm;
+        vrm.scene.rotation.y = Math.PI;
+        scene.add(vrm.scene);
+
+        // カメラの設定
+        camera = new THREE.PerspectiveCamera(
+            35,
+            canvasWidth / canvasHeight,
+            0.1,
+            1000
+        );
+
+        // 注視点の設定（頭を基準に調整）
+        const vrmHeadPos = new THREE.Vector3();
+        vrm.humanoid.getRawBoneNode('head').getWorldPosition(vrmHeadPos);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        vrmHeadPos.x += DEFAULT_CAMERA_CONFIG.targetPos.x;
+        vrmHeadPos.y += DEFAULT_CAMERA_CONFIG.targetPos.y;
+        vrmHeadPos.z += DEFAULT_CAMERA_CONFIG.targetPos.z;
+        controls.target.copy(vrmHeadPos);
+
+        // カメラの初期位置の設定（頭を基準に調整）
+        const cameraPos = vrmHeadPos.clone().add(
+            new THREE.Vector3(
+                DEFAULT_CAMERA_CONFIG.position.x, 
+                DEFAULT_CAMERA_CONFIG.position.y_heightOffset, 
+                DEFAULT_CAMERA_CONFIG.position.z_distance
+            )
+        );
+        camera.position.copy(cameraPos);
+
+        // カメラ設定を反映
+        controls.update();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = canvasWidth / canvasHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(
+                canvasWidth,
+                canvasHeight
+            );
+        });
+
+        animate();
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+    }
+</script>
