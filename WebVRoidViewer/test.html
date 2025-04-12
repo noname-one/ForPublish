@@ -93,15 +93,6 @@
         // カメラ設定を反映
         controls.update();
 
-        window.addEventListener('resize', () => {
-            camera.aspect = canvasWidth / canvasHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(
-                canvasWidth,
-                canvasHeight
-            );
-        });
-
         animate();
     }
 
