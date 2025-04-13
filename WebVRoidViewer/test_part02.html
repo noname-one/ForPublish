@@ -1,0 +1,216 @@
+<span id="loading"></span><br>
+<input type="file" id="poseDataInput" accept=".vroidpose"><br>
+<input type="button" id="expressionOn" value="笑う">
+<input type="button" id="expressionOff" value="笑わない"><br>
+<input type="button" id="mouthOpen" value="口を開ける">
+<input type="button" id="mouthClose" value="口を閉じる"><br>
+<script type="module">
+    import * as THREE from './three.module.js';
+    import { GLTFLoader } from './GLTFLoader.js';
+    import { OrbitControls } from './OrbitControls.js';
+    import { VRMLoaderPlugin } from './three-vrm.module.min.js';
+
+    const VRM_FILE_PATH = './model.vrm'
+    const VRM_CANVAS_EDGE_LENGTH = 700; //VRoidを表示するキャンバスの一辺の長さ(px)
+    const VRM_LOOKAT_SCALE = {  // lookAtでカメラ目線にする際、どれほどカメラに目を向けるかという指定。初期値のままだとあまり目を向けないため補正する
+        horizontalInner: 20,
+        horizontalOuter: 20,
+        verticalDown: 20,
+        verticalUp: 20
+    };
+    const canvasWidth = VRM_CANVAS_EDGE_LENGTH;
+    const canvasHeight = VRM_CANVAS_EDGE_LENGTH;
+    const DEFAULT_CAMERA_CONFIG = {
+        position: {    // カメラ初期位置の補正
+            x: 0.15,
+            y_heightOffset: 0.025,
+            z_distance: -0.4,
+        },
+        targetPos: {    // カメラ注視点の補正
+            x: -0.04,
+            y: 0,
+            z: 0,
+        }
+    };
+
+    // ポーズデータを読み込んだら、それをvrmに適用する
+    document.getElementById("poseDataInput").addEventListener('change', (event)=>{
+        const file = event.target.files[0];
+        if(file && vrm){
+            // ファイルを読み込む
+            const reader = new FileReader();
+            reader.onload = () => {
+                const poseData = JSON.parse(reader.result);
+                const bonePose = poseData.BoneDefinition;
+                
+                // ボーンごとに保持する
+                for (const boneName in bonePose) {
+                    const lowerBoneName = boneName.charAt(0).toLowerCase() + boneName.slice(1);  // ポーズデータとVRMボーンの名前を同じにするために、ローワーキャメルにする
+
+                    // vrmにポーズを適用
+                    const vrmBone = vrm.humanoid.getRawBoneNode(lowerBoneName);
+                    if(vrmBone){
+                        const quat = bonePose[boneName];
+                        vrmBone.quaternion.set(quat.x, quat.y, -quat.z, -quat.w);
+                    }
+                }
+            };
+            reader.readAsText(file);
+        }
+    });
+    // 表情変更
+    document.getElementById("expressionOn").addEventListener('click', (event)=>{
+        if(!vrm) return;
+        vrm.expressionManager.setValue('relaxed', 1.0);
+    });
+    document.getElementById("expressionOff").addEventListener('click', (event)=>{
+        if(!vrm) return;
+        vrm.expressionManager.setValue('relaxed', 0.0);
+    });
+    // 口の開け閉め
+    document.getElementById("mouthOpen").addEventListener('click', (event)=>{
+        if(!vrm) return;
+        vrm.expressionManager.setValue('aa', 1.0);
+    });
+    document.getElementById("mouthClose").addEventListener('click', (event)=>{
+        if(!vrm) return;
+        vrm.expressionManager.setValue('aa', 0.0);
+    });
+    
+    // VRoid読み込み
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+    loader.load(
+        VRM_FILE_PATH,
+        (gltf) => onLoad(gltf),
+        (progress) => {
+            document.getElementById("loading").innerText = `${parseInt(100.0 * (progress.loaded / progress.total))}%`;
+        },
+        (error) => console.error(error)
+    );
+
+    /**
+     * VRoid読み込み完了後の処理
+     */
+    let renderer;
+    let scene;
+    let camera;
+    let vrm;
+    let leftEye;
+    let rightEye;
+    function onLoad(gltf){
+        // canvasの用意
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(
+            canvasWidth,
+            canvasHeight
+        );
+        renderer.setPixelRatio(window.devicePixelRatio); // 解像度の高い端末でも綺麗に表示されるようにする
+        document.body.appendChild(renderer.domElement);
+
+        // シーンの設定
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        // ライトを設定してシーンに追加
+        const light = new THREE.DirectionalLight(0xffffff, 3.0);
+        light.position.set(-1.0, 1.0, -1.0).normalize();
+        scene.add(light);
+
+        // VRMモデルを設定してシーンに追加
+        vrm = gltf.userData.vrm;
+        scene.add(vrm.scene);
+
+        // 姿勢はvroidposeに従って制御するので、自動制御はOFFにする
+        vrm.humanoid.autoUpdateHumanBones = false;
+
+        // カメラの設定
+        camera = new THREE.PerspectiveCamera(
+            35,
+            canvasWidth / canvasHeight,
+            0.1,
+            1000
+        );
+
+        // 注視点の設定（頭を基準に調整）
+        const vrmHeadPos = new THREE.Vector3();
+        vrm.humanoid.getRawBoneNode('head').getWorldPosition(vrmHeadPos);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        vrmHeadPos.x += DEFAULT_CAMERA_CONFIG.targetPos.x;
+        vrmHeadPos.y += DEFAULT_CAMERA_CONFIG.targetPos.y;
+        vrmHeadPos.z += DEFAULT_CAMERA_CONFIG.targetPos.z;
+        controls.target.copy(vrmHeadPos);
+
+        // カメラの初期位置の設定（頭を基準に調整）
+        const cameraPos = vrmHeadPos.clone().add(
+            new THREE.Vector3(
+                DEFAULT_CAMERA_CONFIG.position.x, 
+                DEFAULT_CAMERA_CONFIG.position.y_heightOffset, 
+                DEFAULT_CAMERA_CONFIG.position.z_distance
+            )
+        );
+        camera.position.copy(cameraPos);
+
+        // カメラ設定を反映
+        controls.update();
+
+        // VRMをカメラ目線にする
+        vrm.lookAt.target = camera;
+        vrm.lookAt.autoUpdate = true;
+        // 初期値だとあまりカメラに目を向けないようになっているので、補正する
+        vrm.lookAt.applier.rangeMapHorizontalInner.outputScale = VRM_LOOKAT_SCALE.horizontalInner;
+        vrm.lookAt.applier.rangeMapHorizontalOuter.outputScale = VRM_LOOKAT_SCALE.horizontalOuter;
+        vrm.lookAt.applier.rangeMapVerticalDown.outputScale = VRM_LOOKAT_SCALE.verticalDown;
+        vrm.lookAt.applier.rangeMapVerticalUp.outputScale = VRM_LOOKAT_SCALE.verticalUp;
+
+        animate();
+
+        // テスト用
+        window.vrm = vrm;
+        window.vrm_camera = camera;
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // VRoid自動アップデート
+        const deltaTime = 1 / 60;   // 本当は毎フレームごとに計算した方が良いと思うけど、概ね1/60秒で動くと思うので
+        vrm.update(deltaTime);
+
+        /* 以下はvrm.updateで行っている処理
+        vrm.humanoid.update();
+
+        // モデルの目を注視点（現在の設定ではカメラ）に向ける
+        if(vrm.lookAt){
+            vrm.lookAt.update();
+        }
+
+        // モデルの表情を更新
+        if(vrm.expressionManager){
+            vrm.expressionManager.update();
+        }
+
+        // ボーンの連動関係があれば更新する
+        if (vrm.nodeConstraintManager) {
+            vrm.nodeConstraintManager.update();
+        }
+
+        // モデルのボーンを更新
+        if (vrm.springBoneManager) {
+            vrm.springBoneManager.update(deltaTime);
+        }
+
+        // モデルのマテリアルを更新
+        if (vrm.materials) {
+            vrm.materials.forEach(n => {
+                if (n.update) {
+                    n.update(deltaTime);
+                }
+            });
+        }
+        */
+
+        renderer.render(scene, camera);
+    }
+    
+</script>
