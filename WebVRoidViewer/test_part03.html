@@ -1,0 +1,479 @@
+<span id="loading"></span><br>
+<input type="file" id="poseDataInput" accept=".vroidpose"><br>
+<input type="button" id="expressionOn" value="笑う">
+<input type="button" id="expressionOff" value="笑わない"><br>
+<input type="button" id="mouthOpen" value="口を開ける">
+<input type="button" id="mouthClose" value="口を閉じる"><br>
+<input type="button" id="saveCanvas" value="保存する"><br>
+<script type="module">
+    import * as THREE from './three.module.js';
+    import { GLTFLoader } from './GLTFLoader.js';
+    import { OrbitControls } from './OrbitControls.js';
+    import { VRMLoaderPlugin } from './three-vrm.module.min.js';
+
+    const VRM_FILE_PATH = './model.vrm'
+    const VRM_CANVAS_EDGE_LENGTH = 700; //VRoidを表示するキャンバスの一辺の長さ(px)
+    const VRM_LOOKAT_SCALE = {  // lookAtでカメラ目線にする際、どれほどカメラに目を向けるかという指定。初期値のままだとあまり目を向けないため補正する
+        horizontalInner: 20,
+        horizontalOuter: 20,
+        verticalDown: 20,
+        verticalUp: 20
+    };
+    const canvasWidth = VRM_CANVAS_EDGE_LENGTH;
+    const canvasHeight = VRM_CANVAS_EDGE_LENGTH;
+    const DEFAULT_CAMERA_CONFIG = {
+        position: {    // カメラ初期位置の補正
+            x: 0.15,
+            y_heightOffset: 0.025,
+            z_distance: -0.4,
+        },
+        targetPos: {    // カメラ注視点の補正
+            x: -0.04,
+            y: 0,
+            z: 0,
+        }
+    };
+
+    const BONE_CORRECTION_MAP_X = {
+        Spine: 10,
+        Chest: -18,
+        UpperChest: -9,
+        Neck: 15,
+        Head: 0,
+        LeftUpperLeg: 2,
+        RightUpperLeg: 2,
+        LeftShoulder: 16,
+        RightShoulder: 16,
+    }
+
+    /**
+     * VRoidStudioでの手のテンプレートから手のボーンに反映するための値
+     * https://ringo.ciao.jp/cont/view/20240305/ の値を一部改変して利用
+     */
+    const HAND_TEMPLATE = {
+        Natural: {
+            Thumb: {
+                Metacarpal: [0, -0.11, 0.3], 
+                Proximal: [0, -0.42, 0], 
+                Distal: [-0.11, 0.16, -0.09],
+            },
+            Index: {
+                Proximal: [0, -0.05, 0.14], 
+                Intermediate: [0, 0, 0.18], 
+                Distal: [0, 0, 0.18], 
+            },
+            Middle: {
+                Proximal: [0, 0, 0.38], 
+                Intermediate: [0, 0, 0.18], 
+                Distal: [0, 0, 0.36], 
+            },
+            Ring: {
+                Proximal: [0, 0.05, 0.59], 
+                Intermediate: [0, 0, 0.31], 
+                Distal: [0, 0, 0.33], 
+            },
+            Little: {
+                Proximal: [0, 0.06, 0.72], 
+                Intermediate: [0, 0, 0.41], 
+                Distal: [0, 0, 0.76], 
+            },
+        }, 
+        Grip: {
+            Thumb: {
+                Metacarpal: [0, -0.3, 0.5], 
+                Proximal: [0, -0.8, 0], 
+                Distal: [0, -1.5, 0],
+            },
+            Index: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0.5, 0, 1.5], 
+            },
+            Middle: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+            Ring: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+            Little: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+        }, 
+        Open: {
+            Thumb: {
+                Metacarpal: [0, 0.05, -0.05], 
+                Proximal: [0, 0.1, 0], 
+                Distal: [0, 0.15, 0],
+            },
+            Index: {
+                Proximal: [0, 0.2, 0], 
+                Intermediate: [0, 0, 0], 
+                Distal: [0, 0, 0], 
+            },
+            Middle: {
+                Proximal: [0, 0, 0], 
+                Intermediate: [0, 0, 0], 
+                Distal: [0, 0, 0], 
+            },
+            Ring: {
+                Proximal: [0, -0.2, 0], 
+                Intermediate: [0, 0, 0], 
+                Distal: [0, 0, 0], 
+            },
+            Little: {
+                Proximal: [0, -0.4, 0], 
+                Intermediate: [0, 0, 0], 
+                Distal: [0, 0, 0], 
+            },
+        }, 
+        Good: {
+            Thumb: {
+                Metacarpal: [0, 0.1, -0.1], 
+                Proximal: [0, 0.2, 0], 
+                Distal: [0, 0.3, 0],
+            },
+            Index: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0.5, 0, 1.5], 
+            },
+            Middle: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+            Ring: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+            Little: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+        }, 
+        V: {
+            Thumb: {
+                Metacarpal: [0.53, -0.3, 0.5], 
+                Proximal: [0, -0.8, 0], 
+                Distal: [0, -1.2, 0],
+            },
+            Index: {
+                Proximal: [0, 0.5, 0], 
+                Intermediate: [0, 0, 0], 
+                Distal: [0, 0, 0], 
+            },
+            Middle: {
+                Proximal: [0, 0, 0], 
+                Intermediate: [0, 0, 0], 
+                Distal: [0, 0, 0], 
+            },
+            Ring: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+            Little: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+        }, 
+        Gao: {
+            Thumb: {
+                Metacarpal: [0, 0, 0.5], 
+                Proximal: [0, 0, 0],  
+                Distal: [0, -1.5, 0], 
+            },
+            Index: {
+                Proximal: [0, 0.2, -0.4], 
+                Intermediate: [0, 0, 0.8], 
+                Distal: [0, 0, 1], 
+            },
+            Middle: {
+                Proximal: [0, 0, -0.4], 
+                Intermediate: [0, 0, 0.8], 
+                Distal: [0, 0, 1], 
+            },
+            Ring: {
+                Proximal: [0, -0.2, -0.4], 
+                Intermediate: [0, 0, 0.8], 
+                Distal: [0, 0, 1], 
+            },
+            Little: {
+                Proximal: [0, -0.4, -0.4], 
+                Intermediate: [0, 0, 0.8], 
+                Distal: [0, 0, 1], 
+            },
+        }, 
+        Index: {
+            Thumb: {
+                Metacarpal: [0.5, -0.3, 0.5], 
+                Proximal: [0, -0.8, 0],  
+                Distal: [0, -1.2, 0], 
+            },
+            Index: {
+                Proximal: [0, 0, 0], 
+                Intermediate: [0, 0, 0], 
+                Distal: [0, 0, 0], 
+            },
+            Middle: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+            Ring: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+            Little: {
+                Proximal: [0, 0, 1.2], 
+                Intermediate: [0, 0, 1.5], 
+                Distal: [0, 0, 1.5], 
+            },
+        }, 
+    };
+
+    // ポーズデータを読み込んだら、それをvrmに適用する
+    document.getElementById("poseDataInput").addEventListener('change', (event)=>{
+        const file = event.target.files[0];
+        if(file && vrm){
+            // ファイルを読み込む
+            const reader = new FileReader();
+            reader.onload = () => {
+                const poseData = JSON.parse(reader.result);
+                const bonePose = poseData.BoneDefinition;
+                
+                // ボーンごとに保持する
+                for (const boneName in bonePose) {
+                    const lowerBoneName = boneName.charAt(0).toLowerCase() + boneName.slice(1);  // ポーズデータとVRMボーンの名前を同じにするために、ローワーキャメルにする
+
+                    // vrmにポーズを適用
+                    const vrmBone = vrm.humanoid.getNormalizedBoneNode(lowerBoneName);
+
+                    // 補正する
+                    if(vrmBone){
+                        let quat = bonePose[boneName];
+                        if(BONE_CORRECTION_MAP_X[boneName]){
+                            // X軸回転だけのクォータニオンを作成
+                            const correctionQuat = new THREE.Quaternion().setFromEuler(
+                                new THREE.Euler(THREE.MathUtils.degToRad(BONE_CORRECTION_MAP_X[boneName]), 0, 0, 'XYZ')
+                            );
+
+                            // 合成（回転順：original → xOnlyQuat）
+                            const originalQuat = new THREE.Quaternion(quat.x, quat.y, -quat.z, -quat.w);
+                            quat = correctionQuat.premultiply(originalQuat);
+
+                            // ポーズに反映
+                            vrmBone.quaternion.set(quat.x, quat.y, quat.z, quat.w);
+                        } else {
+                            // ポーズに反映
+                            vrmBone.quaternion.set(quat.x, quat.y, -quat.z, -quat.w);
+                        }
+                    }
+                }
+
+                // 指の形を取り込む
+                setHandPose(poseData.LeftHandAnimationName, poseData.LeftHandAnimationWeight);
+                setHandPose(poseData.RightHandAnimationName, poseData.RightHandAnimationWeight);
+            };
+            reader.readAsText(file);
+        }
+    });
+    // 指の形を取り込む
+    function setHandPose(handAnimationName, weight){
+        if(!handAnimationName) return;
+
+        const handSide = handAnimationName.includes('L_') ? 'left' : 'right';
+        const handName = handAnimationName.replace(/^[LR]_/, "");
+        const handConfig = HAND_TEMPLATE[handName];
+        for(const finger in handConfig){
+            for(const joint in handConfig[finger]) {
+                const boneName = `${handSide}${finger}${joint}`;
+                const [rx, ry, rz] = handConfig[finger][joint];
+
+                const euler = (handSide === 'left')
+                    ? new THREE.Euler(rx * weight,  ry * weight,  rz * weight)
+                    : new THREE.Euler(rx * weight, -ry * weight, -rz * weight);
+                const quat = new THREE.Quaternion().setFromEuler(euler);
+
+                // vrmにポーズを適用
+                const vrmBone = vrm.humanoid.getNormalizedBoneNode(boneName);
+                if(vrmBone){
+                    vrmBone.quaternion.set(quat.x, quat.y, -quat.z, -quat.w);
+                }
+            }
+        }
+    }
+    // 撮影機能
+    document.getElementById("saveCanvas").addEventListener('click', (event)=>{
+        // `<a>` タグを作成して、ダウンロードをトリガー
+        const link = document.createElement("a");
+        renderer.render(scene, camera);  // バッファ解放されている可能性が高いため、一度明示的に描画する
+        link.href = renderer.domElement.toDataURL("image/png");
+        link.download = `${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    });
+    // 表情変更
+    document.getElementById("expressionOn").addEventListener('click', (event)=>{
+        if(!vrm) return;
+        vrm.expressionManager.setValue('relaxed', 1.0);
+    });
+    document.getElementById("expressionOff").addEventListener('click', (event)=>{
+        if(!vrm) return;
+        vrm.expressionManager.setValue('relaxed', 0.0);
+    });
+    // 口の開け閉め
+    document.getElementById("mouthOpen").addEventListener('click', (event)=>{
+        if(!vrm) return;
+        vrm.expressionManager.setValue('aa', 1.0);
+    });
+    document.getElementById("mouthClose").addEventListener('click', (event)=>{
+        if(!vrm) return;
+        vrm.expressionManager.setValue('aa', 0.0);
+    });
+    
+    // VRoid読み込み
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+    loader.load(
+        VRM_FILE_PATH,
+        (gltf) => onLoad(gltf),
+        (progress) => {
+            document.getElementById("loading").innerText = `${parseInt(100.0 * (progress.loaded / progress.total))}%`;
+        },
+        (error) => console.error(error)
+    );
+
+    /**
+     * VRoid読み込み完了後の処理
+     */
+    let renderer;
+    let scene;
+    let camera;
+    let vrm;
+    let leftEye;
+    let rightEye;
+    function onLoad(gltf){
+        // canvasの用意
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(
+            canvasWidth,
+            canvasHeight
+        );
+        renderer.setPixelRatio(window.devicePixelRatio); // 解像度の高い端末でも綺麗に表示されるようにする
+        document.body.appendChild(renderer.domElement);
+
+        // シーンの設定
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        // ライトを設定してシーンに追加
+        const light = new THREE.DirectionalLight(0xffffff, 3.0);
+        light.position.set(-1.0, 1.0, -1.0).normalize();
+        scene.add(light);
+
+        // VRMモデルを設定してシーンに追加
+        vrm = gltf.userData.vrm;
+        scene.add(vrm.scene);
+
+        // カメラの設定
+        camera = new THREE.PerspectiveCamera(
+            35,
+            canvasWidth / canvasHeight,
+            0.1,
+            1000
+        );
+
+        // 注視点の設定（頭を基準に調整）
+        const vrmHeadPos = new THREE.Vector3();
+        vrm.humanoid.getRawBoneNode('head').getWorldPosition(vrmHeadPos);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        vrmHeadPos.x += DEFAULT_CAMERA_CONFIG.targetPos.x;
+        vrmHeadPos.y += DEFAULT_CAMERA_CONFIG.targetPos.y;
+        vrmHeadPos.z += DEFAULT_CAMERA_CONFIG.targetPos.z;
+        controls.target.copy(vrmHeadPos);
+
+        // カメラの初期位置の設定（頭を基準に調整）
+        const cameraPos = vrmHeadPos.clone().add(
+            new THREE.Vector3(
+                DEFAULT_CAMERA_CONFIG.position.x, 
+                DEFAULT_CAMERA_CONFIG.position.y_heightOffset, 
+                DEFAULT_CAMERA_CONFIG.position.z_distance
+            )
+        );
+        camera.position.copy(cameraPos);
+
+        // カメラ設定を反映
+        controls.update();
+
+        // VRMをカメラ目線にする
+        vrm.lookAt.target = camera;
+        vrm.lookAt.autoUpdate = true;
+        // 初期値だとあまりカメラに目を向けないようになっているので、補正する
+        vrm.lookAt.applier.rangeMapHorizontalInner.outputScale = VRM_LOOKAT_SCALE.horizontalInner;
+        vrm.lookAt.applier.rangeMapHorizontalOuter.outputScale = VRM_LOOKAT_SCALE.horizontalOuter;
+        vrm.lookAt.applier.rangeMapVerticalDown.outputScale = VRM_LOOKAT_SCALE.verticalDown;
+        vrm.lookAt.applier.rangeMapVerticalUp.outputScale = VRM_LOOKAT_SCALE.verticalUp;
+
+        animate();
+
+        // テスト用
+        window.vrm = vrm;
+        window.vrm_camera = camera;
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // VRoid自動アップデート
+        const deltaTime = 1 / 60;   // 本当は毎フレームごとに計算した方が良いと思うけど、概ね1/60秒で動くと思うので
+        vrm.update(deltaTime);
+
+        /* 以下はvrm.updateで行っている処理
+        vrm.humanoid.update();
+
+        // モデルの目を注視点（現在の設定ではカメラ）に向ける
+        if(vrm.lookAt){
+            vrm.lookAt.update();
+        }
+
+        // モデルの表情を更新
+        if(vrm.expressionManager){
+            vrm.expressionManager.update();
+        }
+
+        // ボーンの連動関係があれば更新する
+        if (vrm.nodeConstraintManager) {
+            vrm.nodeConstraintManager.update();
+        }
+
+        // モデルのボーンを更新
+        if (vrm.springBoneManager) {
+            vrm.springBoneManager.update(deltaTime);
+        }
+
+        // モデルのマテリアルを更新
+        if (vrm.materials) {
+            vrm.materials.forEach(n => {
+                if (n.update) {
+                    n.update(deltaTime);
+                }
+            });
+        }
+        */
+
+        renderer.render(scene, camera);
+    }
+    
+</script>
